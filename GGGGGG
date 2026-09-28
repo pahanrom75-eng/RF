@@ -1,0 +1,79 @@
+import numpy as np
+import pywt
+import matplotlib.pyplot as plt
+
+# ==========================================
+# 1. Генерация модельного сигнала полиграммы
+# ==========================================
+fs = 250  # Частота дискретизации (Гц)
+duration = 10  # Длительность в секундах
+t = np.linspace(0, duration, int(fs * duration), endpoint=False)
+
+# Моделируем физиологический сигнал (например, дыхание + высокочастотные всплески пульса + шум)
+signal_base = np.sin(2 * np.pi * 0.3 * t)  # Медленный компонент (дыхание ~0.3 Гц)
+burst = np.exp(-((t - 5) ** 2) / 0.1) * np.sin(2 * np.pi * 10 * t)  # Реакция/всплеск на 5-й секунде
+noise = 0.2 * np.random.normal(size=len(t))  # Шум датчика
+
+polygram_signal = signal_base + burst + noise
+
+# ==========================================
+# 2. Непрерывное вейвлет-преобразование (CWT)
+# ==========================================
+wavelet_name = 'cmor1.5-1.0'  # Комплексный вейвлет Морле
+scales = np.arange(1, 128)   # Масштабы
+
+coefficients, frequencies = pywt.cwt(polygram_signal, scales, wavelet_name, sampling_period=1/fs)
+power = np.abs(coefficients) ** 2  # Мощность спектра
+
+# ==========================================
+# 3. Фильтрация и декомпозиция (DWT)
+# ==========================================
+# Многоуровневое разложение с помощью вейвлета Добеши (db4)
+dwt_wavelet = 'db4'
+level = 4
+coeffs = pywt.wavedec(polygram_signal, dwt_wavelet, level=level)
+
+# Пороговая обработка для удаления высокочастотного шума (денойзинг)
+threshold = np.std(coeffs[-1]) * np.sqrt(2 * np.log(len(polygram_signal)))
+coeffs_denoised = [coeffs[0]] + [pywt.threshold(c, threshold, mode='soft') for c in coeffs[1:]]
+
+# Восстановление очищенного сигнала
+filtered_signal = pywt.waverec(coeffs_denoised, dwt_wavelet)
+# Выравниваем длину, если есть погрешность округления
+filtered_signal = filtered_signal[:len(polygram_signal)]
+
+# ==========================================
+# 4. Визуализация результатов
+# ==========================================
+plt.figure(figsize=(12, 10))
+
+# Исходный vs Очищенный сигнал
+plt.subplot(3, 1, 1)
+plt.plot(t, polygram_signal, color='gray', alpha=0.6, label='Исходный сигнал (с шумом)')
+plt.plot(t, filtered_signal, color='red', linewidth=1.5, label='Очищенный сигнал (DWT db4)')
+plt.title('Полиграмма: удаление шумов с помощью DWT')
+plt.xlabel('Время (с)')
+plt.ylabel('Амплитуда')
+plt.legend(loc='upper right')
+plt.grid(True)
+
+# Скалограмма (CWT)
+plt.subplot(3, 1, 2)
+plt.contourf(t, frequencies, power, levels=100, cmap='inferno')
+plt.title('Частотно-временная скалограмма (CWT Morlet)')
+plt.xlabel('Время (с)')
+plt.ylabel('Частота (Гц)')
+plt.colorbar(label='Мощность')
+plt.ylim(0, 20)  # Ограничиваем диапазон частот для наглядности
+
+# Детализация компонентов по уровням (DWT)
+plt.subplot(3, 1, 3)
+plt.plot(t, coeffs_denoised[0][:len(t)], label='Аппроксимация (базовый тренд)')
+plt.title('Выделенная низкочастотная составляющая')
+plt.xlabel('Время (с)')
+plt.ylabel('Амплитуда')
+plt.legend(loc='upper right')
+plt.grid(True)
+
+plt.tight_layout()
+plt.show()
